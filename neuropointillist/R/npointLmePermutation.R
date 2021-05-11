@@ -75,24 +75,33 @@ npointLmePermutation <- function(permutationNumber, permutationRDS, targetDV, z_
     }
     permutationMatrix <- readRDS(permutationRDS)
     if(dim(permutationMatrix)[2] != dim(data)[1]){
-        stop(sprintf('Permutation vector is not the same length as data.\nLength of permutations: %d; length of data: %d.', 
+        stop(sprintf('Permutation vector is not the same length as data.\nLength of permutations: %d; length of data: %d.',
                      dim(permutationMatrix)[2], dim(data)[1]))
     }
     ithPermutation <- permutationMatrix[permutationNumber, ]
     residsFormula <- update(formula, as.formula(paste0('. ~ . -', targetDV)))
     ystarFormula <- update(formula, as.formula(paste0('y_star ~ .')))
-    
+
+    if(targetDV == '1'){
+      targetDV_name <- '(Intercept)'
+      #This does not account for nesting, so it defaults to fully "within" permutation behavior.
+      sign_multiplier <- sample(c(-1,1), dim(data)[[1]], replace = TRUE)
+    } else {
+      targetDV_name <- targetDV
+      sign_multiplier <- rep(1, dim(data)[[1]])
+    }
+
     p <- try({
         residsModel <- do.call(nlme::lme, c(list(fixed = residsFormula, random = random, data = data), lmeOptsResid))
         epsilon_z <- resid(residsModel, level = level)
-        P_j.epsilon_z <- epsilon_z[ithPermutation]
+        P_j.epsilon_z <- epsilon_z[ithPermutation]*sign_multiplier
         Zy <- predict(residsModel, level = level)
         data$y_star <- P_j.epsilon_z + Zy
         residsModel
     })
-    
+
     e <- try(permutationModel <- do.call(nlme::lme, c(list(fixed = ystarFormula, random = random, data = data), lmeOptsPerm)))
-    
+
     if(inherits(p, "try-error") | inherits(e, "try-error")){
         returnObject <- list(model = NULL, Z = NULL)
     } else {
@@ -105,13 +114,13 @@ npointLmePermutation <- function(permutationNumber, permutationRDS, targetDV, z_
             if(inherits(eSandwich, "try-error")){
                 returnObject <- list(model = NULL, Z = NULL)
             } else {
-                Z <- qnorm(pt(permutationModelSW[targetDV, 'tstat'], 
-                              permutationModelSW[targetDV, 'df']))
+                Z <- qnorm(pt(permutationModelSW[targetDV_name, 'tstat'],
+                              permutationModelSW[targetDV_name, 'df']))
                 returnObject <- list(model = permutationModelSW, Z = Z)
             }
         } else {
             coefs <- coef(summary(permutationModel))
-            Z <- qnorm(pt(coefs[targetDV, 't-value'], coefs[targetDV, 'DF']))
+            Z <- qnorm(pt(coefs[targetDV_name, 't-value'], coefs[targetDV_name, 'DF']))
             returnObject <- list(model = permutationModel, Z = Z)
         }
     }
